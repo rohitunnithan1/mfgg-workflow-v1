@@ -431,6 +431,7 @@ let builds = SEED.map(b => ({
 }));
 let activeStage = 'all';
 let activeTab = 'prod';
+let historicalBuilds = []; // recently completed orders — used only for KPI chart
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -911,9 +912,11 @@ function renderWeeklyDispatch() {
     if(amrF) amrSel.value=amrF;
   }
 
-  let filtered = builds;
-  if (amrF)   filtered = filtered.filter(b=>b.amrType===amrF);
-  if (btypeF) filtered = filtered.filter(b=>(b.buildType||'').toLowerCase().includes(btypeF.toLowerCase()));
+  // Combine active + historical completed for the full picture
+  let allForChart = [...builds, ...historicalBuilds];
+  if (amrF)   allForChart = allForChart.filter(b=>b.amrType===amrF);
+  if (btypeF) allForChart = allForChart.filter(b=>(b.buildType||'').toLowerCase().includes(btypeF.toLowerCase()));
+  let filtered = allForChart;
 
   filtered.forEach(b => {
     const isDone = b.stage==='DONE'||b.stage==='DISPATCH';
@@ -1111,17 +1114,31 @@ async function requestRefresh() {
   btn.textContent = '⏳ Fetching…';
   btn.disabled = true;
   try {
+    // Fetch 1: active MOs (not Done/Rejected)
     const all = [];
     let startAt = 0, page = 1;
-    const JQL = 'project = MOM AND status not in ("Done","Rejected") ORDER BY updated DESC';
+    const JQL_ACTIVE = 'project = MOM AND status not in ("Done","Rejected") ORDER BY updated DESC';
     while (true) {
-      btn.textContent = `⏳ Page ${page}…`;
-      const data = await jiraSearch(JQL, startAt);
+      btn.textContent = `⏳ Active MOs — page ${page}…`;
+      const data = await jiraSearch(JQL_ACTIVE, startAt);
       all.push(...(data.issues || []).map(parseIssueFromJira));
       if (data.isLast || !data.nextStartAt) break;
       startAt = data.nextStartAt; page++;
     }
     builds = all;
+
+    // Fetch 2: recently completed (Done) orders for historical chart data
+    btn.textContent = '⏳ Loading history…';
+    const doneAll = [];
+    let doneStart = 0;
+    const JQL_DONE = 'project = MOM AND status = "Done" AND updated >= -365d ORDER BY updated DESC';
+    while (true) {
+      const data = await jiraSearch(JQL_DONE, doneStart);
+      doneAll.push(...(data.issues || []).map(parseIssueFromJira));
+      if (data.isLast || !data.nextStartAt) break;
+      doneStart = data.nextStartAt;
+    }
+    historicalBuilds = doneAll;
     document.getElementById('meta-info').textContent =
       `${builds.length} active MOs · updated ${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`;
     populateAmrFilter(); populateMatAmrFilter();
