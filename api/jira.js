@@ -5,7 +5,8 @@
  *   JIRA_API_TOKEN  — API token from https://id.atlassian.com/manage-profile/security/api-tokens
  */
 
-const JIRA_BASE = 'https://ati-motors.atlassian.net/rest/api/3';
+// v2 search endpoint — more reliable with Basic auth than v3/issue/search
+const JIRA_BASE = 'https://ati-motors.atlassian.net/rest/api/2';
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -29,7 +30,8 @@ module.exports = async function handler(req, res) {
   const auth = Buffer.from(`${email}:${token}`).toString('base64');
 
   // GET with fields=*all — avoids field validation errors, works reliably with Basic auth
-  const url = new URL(`${JIRA_BASE}/issue/search`);
+  // v2 search uses /search not /issue/search
+  const url = new URL(`${JIRA_BASE}/search`);
   url.searchParams.set('jql', jql);
   url.searchParams.set('maxResults', String(maxResults));
   url.searchParams.set('startAt', String(startAt));
