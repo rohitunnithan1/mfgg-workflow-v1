@@ -129,10 +129,15 @@ main.no-sidebar sidebar{opacity:0;pointer-events:none;overflow:hidden;width:0;pa
 .mp-table .col-needed{position:sticky;left:160px;z-index:2;background:#fff;min-width:80px;max-width:80px;text-align:center;padding:6px;border-right:2px solid var(--bdr)}
 .mp-table thead .col-comp,.mp-table thead .col-needed{background:var(--s2);font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--mut);z-index:3}
 /* build columns */
-.mp-col-hdr{min-width:96px;max-width:96px;padding:8px 10px;text-align:center;background:var(--s2);font-size:10px;font-weight:700;color:var(--txt);vertical-align:bottom;line-height:1.3}
+.mp-col-hdr{min-width:120px;max-width:120px;padding:8px 10px;text-align:center;background:var(--s2);font-size:10px;font-weight:700;color:var(--txt);vertical-align:bottom;line-height:1.3}
 .mp-col-hdr.is-current{background:#eff6ff;color:var(--acc);border-top:3px solid var(--acc)}
 .mp-col-hdr .hdr-serial{font-size:12px;font-weight:800}
-.mp-col-hdr .hdr-key{font-size:9px;color:var(--mut);margin-top:2px;font-weight:400}
+.mp-col-hdr .hdr-key{font-size:9px;color:var(--mut);margin-top:1px;font-weight:400}
+.mp-col-hdr .hdr-divider{border:none;border-top:1px solid var(--bdr);margin:5px 0}
+.mp-col-hdr .hdr-customer{font-size:10px;font-weight:600;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:108px;text-align:center}
+.mp-col-hdr .hdr-due{font-size:9px;color:var(--mut);margin-top:2px;font-family:monospace}
+.mp-col-hdr .hdr-due.overdue{color:var(--red);font-weight:700}
+.mp-col-hdr .hdr-stage{display:inline-block;font-size:8px;font-weight:700;padding:2px 5px;border-radius:4px;margin-top:4px;text-transform:uppercase;letter-spacing:.4px}
 .mp-cell{min-width:96px;max-width:96px;padding:8px 10px;text-align:center;font-size:11px;font-weight:600;vertical-align:middle}
 .mp-cell.avail{color:#059669;background:rgba(5,150,105,.06)}
 .mp-cell.future{color:#d97706}
@@ -570,13 +575,26 @@ function renderMatPlanning() {
   html += `<th class="col-needed" title="Include in Clear To Build calculation">Needed?</th>`;
 
   columns.forEach(col => {
-    const moTag = col.hasMO
-      ? `<div class="hdr-key">${col.build ? col.build.key : ''}</div>`
+    const b = col.build;
+    const stage = b ? (STAGE_MAP[b.stage] || STAGE_MAP['TO_DO']) : null;
+    let dueHtml = '';
+    if (b && b.duedate) {
+      const [dy,dm,dd]=b.duedate.substring(0,10).split('-').map(Number);
+      const isLate = new Date(dy,dm-1,dd) < today;
+      dueHtml = `<div class="hdr-due${isLate?' overdue':''}">${fmtShort(b.duedate)}</div>`;
+    }
+    const stageBadge = stage ? `<div><span class="hdr-stage" style="background:${stage.color}20;color:${stage.color};border:1px solid ${stage.color}40">${stage.label}</span></div>` : '';
+    const customerHtml = b
+      ? `<div class="hdr-customer" title="${esc(b.customer)}">${esc(b.customer)}</div>`
       : `<div class="hdr-key" style="color:#f87171">No MO yet</div>`;
-    html += `<th class="mp-col-hdr${col.isCurrent ? ' is-current' : ''}">
-      ${col.isCurrent ? '<div style="font-size:8px;color:var(--acc);font-weight:700;letter-spacing:1px;margin-bottom:2px">(current)</div>' : ''}
+    html += `<th class="mp-col-hdr${col.isCurrent?' is-current':''}">
+      ${col.isCurrent?'<div style="font-size:8px;color:var(--acc);font-weight:700;letter-spacing:1px;margin-bottom:2px">(current)</div>':''}
       <div class="hdr-serial">${esc(col.snLabel)}</div>
-      ${moTag}
+      <div class="hdr-key">${b?b.key:''}</div>
+      <hr class="hdr-divider">
+      ${customerHtml}
+      ${dueHtml}
+      ${stageBadge}
     </th>`;
   });
   html += '</tr></thead><tbody>';
