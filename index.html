@@ -940,9 +940,12 @@ function renderWeeklyDispatch() {
     const isDone = b.stage==='DONE'||b.stage==='DISPATCH';
     let wk, barType;
     if (isDone) {
-      const ds=b.actualDispatchDate; if(!ds) return;
-      const d=new Date(ds); if(isNaN(d)) return;
-      wk=getMonday(d); barType='done';
+      const ds = b.actualDispatchDate
+               || (b.dispatchActual ? b.dispatchActual+'-15' : null)
+               || (b.dispatchPlan   ? b.dispatchPlan+'-15'   : null)
+               || b.duedate;
+      if (!ds) return;
+      wk = getMonday(ds.substring(0,10)); barType='done';
     } else {
       const ds=b.duedate; if(!ds) return;
       const d=new Date(ds); d.setHours(0,0,0,0);
