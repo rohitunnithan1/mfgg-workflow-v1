@@ -304,13 +304,26 @@ main.no-sidebar sidebar{opacity:0;pointer-events:none;overflow:hidden;width:0;pa
         <div style="font-size:9px;font-weight:700;letter-spacing:1.5px;color:var(--mut);text-transform:uppercase;margin-bottom:14px">KPIs / Summary</div>
         <div id="kpi-cards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:18px"></div>
         <div class="chart-card">
-          <div class="chart-title">Weekly Dispatch Volume</div>
-          <div class="chart-sub">MOs due per week · red = overdue, no actual dispatch yet</div>
-          <div style="overflow-x:auto"><div style="min-width:500px;height:230px"><canvas id="wdv-chart"></canvas></div></div>
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+            <div>
+              <div class="chart-title">Weekly Dispatch Volume — MOs due per week</div>
+              <div class="chart-sub">Dispatched/Done → actual dispatch date · Others → due date · Overdue stacked in current week</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-shrink:0">
+              <select id="wdv-amr" class="filter-sel" onchange="renderWeeklyDispatch()"><option value="">All AMR Types</option></select>
+              <select id="wdv-btype" class="filter-sel" onchange="renderWeeklyDispatch()">
+                <option value="">All Build Types</option>
+                <option value="Production">Production</option>
+                <option value="Engineering">Engineering</option>
+              </select>
+            </div>
+          </div>
+          <div style="overflow-x:auto"><div style="min-width:600px;height:260px"><canvas id="wdv-chart"></canvas></div></div>
           <div style="display:flex;gap:14px;margin-top:10px;flex-wrap:wrap">
-            <div style="display:flex;align-items:center;gap:5px"><div style="width:11px;height:11px;border-radius:2px;background:#f87171"></div><span style="font-size:10px;color:var(--mut)">Overdue</span></div>
+            <div style="display:flex;align-items:center;gap:5px"><div style="width:11px;height:11px;border-radius:2px;background:#f87171"></div><span style="font-size:10px;color:var(--mut)">Overdue (in current week)</span></div>
             <div style="display:flex;align-items:center;gap:5px"><div style="width:11px;height:11px;border-radius:2px;background:#60a5fa"></div><span style="font-size:10px;color:var(--mut)">This week</span></div>
             <div style="display:flex;align-items:center;gap:5px"><div style="width:11px;height:11px;border-radius:2px;background:#a78bfa"></div><span style="font-size:10px;color:var(--mut)">Upcoming</span></div>
+            <div style="display:flex;align-items:center;gap:5px"><div style="width:11px;height:11px;border-radius:2px;background:#1f2937"></div><span style="font-size:10px;color:var(--mut)">Completed — Done &amp; Dispatch (actual date)</span></div>
           </div>
         </div>
         <div class="chart-card">
@@ -882,33 +895,118 @@ function getMonday(d){
 }
 
 function renderWeeklyDispatch() {
-  const todayWk=getMonday(new Date());
-  const wm={};
-  builds.forEach(b=>{
-    const ds=b.duedate||(b.dispatchPlan?b.dispatchPlan+'-15':null);
-    if(!ds) return;
-    const d=new Date(ds); if(isNaN(d)) return;
-    const wk=getMonday(d);
-    if(!wm[wk]) wm[wk]={overdue:0,thisWeek:0,upcoming:0};
-    if(wk<todayWk) wm[wk].overdue++;
-    else if(wk===todayWk) wm[wk].thisWeek++;
-    else wm[wk].upcoming++;
+  const amrF    = document.getElementById('wdv-amr')?.value || '';
+  const btypeF  = document.getElementById('wdv-btype')?.value || '';
+  const todayWk = getMonday(new Date());
+  const today   = new Date(); today.setHours(0,0,0,0);
+  const wm = {};
+  const BUCKETS = ['overdue','thisWeek','upcoming','done'];
+
+  // Populate AMR filter once
+  const amrSel = document.getElementById('wdv-amr');
+  if (amrSel && amrSel.options.length <= 1) {
+    [...new Set(builds.map(b=>b.amrType).filter(Boolean))].sort().forEach(t=>{
+      const o=document.createElement('option');o.value=t;o.textContent=t;amrSel.appendChild(o);
+    });
+    if(amrF) amrSel.value=amrF;
+  }
+
+  let filtered = builds;
+  if (amrF)   filtered = filtered.filter(b=>b.amrType===amrF);
+  if (btypeF) filtered = filtered.filter(b=>(b.buildType||'').toLowerCase().includes(btypeF.toLowerCase()));
+
+  filtered.forEach(b => {
+    const isDone = b.stage==='DONE'||b.stage==='DISPATCH';
+    let wk, barType;
+    if (isDone) {
+      const ds=b.actualDispatchDate; if(!ds) return;
+      const d=new Date(ds); if(isNaN(d)) return;
+      wk=getMonday(d); barType='done';
+    } else {
+      const ds=b.duedate; if(!ds) return;
+      const d=new Date(ds); d.setHours(0,0,0,0);
+      if(d<today){wk=todayWk;barType='overdue';}
+      else{wk=getMonday(d);barType=wk===todayWk?'thisWeek':'upcoming';}
+    }
+    if(!wm[wk]) wm[wk]={overdue:[],thisWeek:[],upcoming:[],done:[]};
+    wm[wk][barType].push(b);
   });
+
+  if(!wm[todayWk]) wm[todayWk]={overdue:[],thisWeek:[],upcoming:[],done:[]};
+
   const allWks=Object.keys(wm).sort();
   const tIdx=allWks.indexOf(todayWk);
   const start=Math.max(0,tIdx-6);
-  const weeks=allWks.slice(start,start+16);
-  const labels=weeks.map(w=>new Date(w).toLocaleDateString('en-GB',{day:'2-digit',month:'short'}));
+  const weeks=allWks.slice(start,start+18);
+
+  // Multi-line labels: "DD Mon / – DD Mon / PAST|THIS WEEK"
+  const labels=weeks.map(w=>{
+    const mon=new Date(w);
+    const sun=new Date(w); sun.setDate(sun.getDate()+6);
+    const l1=mon.toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
+    const l2=`– ${sun.toLocaleDateString('en-GB',{day:'2-digit',month:'short'})}`;
+    const ctx=w<todayWk?'PAST':w===todayWk?'THIS WEEK':'';
+    return ctx?[l1,l2,ctx]:[l1,l2];
+  });
+
+  const countOf=b=>weeks.map(w=>(wm[w]||{})[b]?.length||0);
+
+  // Draw stacked totals on top
+  const stackTotalPlugin={
+    id:'stackTotal',
+    afterDatasetsDraw(chart){
+      const{ctx}=chart;
+      weeks.forEach((wk,i)=>{
+        const total=BUCKETS.reduce((s,b)=>s+((wm[wk]||{})[b]?.length||0),0);
+        if(!total) return;
+        let topY=null;
+        for(let di=chart.data.datasets.length-1;di>=0;di--){
+          const meta=chart.getDatasetMeta(di);
+          if(!meta.hidden&&(chart.data.datasets[di].data[i]||0)>0){topY=meta.data[i]?.y;break;}
+        }
+        if(topY==null) return;
+        ctx.save();
+        ctx.fillStyle='#111827';
+        ctx.font='bold 11px -apple-system,sans-serif';
+        ctx.textAlign='center';
+        ctx.fillText(String(total),chart.getDatasetMeta(0).data[i].x,topY-6);
+        ctx.restore();
+      });
+    }
+  };
+
   Chart.getChart('wdv-chart')?.destroy();
   new Chart(document.getElementById('wdv-chart'),{
-    type:'bar',data:{labels,datasets:[
-      {label:'Overdue',data:weeks.map(w=>(wm[w]||{}).overdue||0),backgroundColor:'#f87171'},
-      {label:'This Week',data:weeks.map(w=>(wm[w]||{}).thisWeek||0),backgroundColor:'#60a5fa'},
-      {label:'Upcoming',data:weeks.map(w=>(wm[w]||{}).upcoming||0),backgroundColor:'#a78bfa'},
+    type:'bar',
+    plugins:[stackTotalPlugin],
+    data:{labels,datasets:[
+      {label:'Overdue',       data:countOf('overdue'),  backgroundColor:'#f87171'},
+      {label:'Due this week', data:countOf('thisWeek'), backgroundColor:'#60a5fa'},
+      {label:'Upcoming',      data:countOf('upcoming'), backgroundColor:'#a78bfa'},
+      {label:'Dispatched',    data:countOf('done'),     backgroundColor:'#1f2937'},
     ]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
-      scales:{x:{stacked:true,grid:{display:false},ticks:{font:{size:10},color:'#6b7280'}},
-              y:{stacked:true,beginAtZero:true,ticks:{stepSize:1,font:{size:10},color:'#6b7280'},grid:{color:'#f3f4f6'}}}}
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          callbacks:{
+            label(ctx){
+              const bucket=BUCKETS[ctx.datasetIndex];
+              const list=(wm[weeks[ctx.dataIndex]]||{})[bucket]||[];
+              if(!list.length) return null;
+              const lines=[`${ctx.dataset.label}: ${list.length}`];
+              list.forEach(b=>lines.push(`  ${b.key}  ${b.customer}`));
+              return lines;
+            }
+          }
+        }
+      },
+      scales:{
+        x:{stacked:true,grid:{display:false},ticks:{font:{size:10},color(c){return weeks[c.index]===todayWk?'#2563eb':'#6b7280';}}},
+        y:{stacked:true,beginAtZero:true,ticks:{stepSize:1,font:{size:10},color:'#6b7280'},grid:{color:'#f3f4f6'}}
+      }
+    }
   });
 }
 
@@ -979,54 +1077,30 @@ function parseIssueFromJira(issue) {
   const amrType = f.customfield_10642?.value || f.customfield_10591 || '';
   const buildType = f.customfield_10816?.value?.trim() || '';
   const stage = STATUS_MAP[f.status?.name] || 'TO_DO';
-
-  // Extract DEL link from issuelinks
   let delKey = null, delStatus = null;
   for (const link of (f.issuelinks || [])) {
     const linked = link.inwardIssue || link.outwardIssue;
-    if (linked?.key?.startsWith('DEL-')) {
-      delKey = linked.key;
-      delStatus = linked.fields?.status?.name || null;
-      break;
-    }
+    if (linked?.key?.startsWith('DEL-')) { delKey = linked.key; delStatus = linked.fields?.status?.name || null; break; }
   }
-
   return {
     key: issue.key, summary, customer, amrType, buildType, stage,
-    jiraStatus: f.status?.name || '',
-    priority: f.priority?.name?.toLowerCase() || 'medium',
-    duedate: f.duedate || '',
-    dispatchPlan: f.customfield_10709?.value || f.customfield_10676 || '',
-    dispatchActual: f.customfield_11203?.value || '',
-    actualDispatchDate: f.customfield_10743 || '',
-    poDate: f.customfield_10817 || '',
-    mrsPlan: f.customfield_10850 || '', mrsActual: f.customfield_10851 || '',
+    jiraStatus: f.status?.name || '', priority: f.priority?.name?.toLowerCase() || 'medium',
+    duedate: f.duedate || '', dispatchPlan: f.customfield_10709?.value || f.customfield_10676 || '',
+    dispatchActual: f.customfield_11203?.value || '', actualDispatchDate: f.customfield_10743 || '',
+    poDate: f.customfield_10817 || '', mrsPlan: f.customfield_10850 || '', mrsActual: f.customfield_10851 || '',
     kittingPlan: f.customfield_10809 || '', kittingActual: f.customfield_10812 || '',
     productionPlan: f.customfield_10811 || '', productionActual: f.customfield_10813 || '',
     validationPlan: f.customfield_10815 || '', validationActual: f.customfield_10814 || '',
-    vehicleSerial: f.customfield_10884 || '',
-    poNumber: f.customfield_10588 || '',
-    materialStatus: f.customfield_11236?.value || '',
-    materialAvailability: f.customfield_11269 || '',
-    qty: f.customfield_10598 || '',
-    spoc: f.customfield_10603 || '',
-    location: f.customfield_10046 || '',
-    purchaseType: f.customfield_11202?.value || '',
-    poReceived: f.customfield_10675?.value || '',
-    leadTimeWeeks: f.customfield_10810 || '',
-    assignee: f.assignee?.displayName || '',
-    // Components
-    chassis: f.customfield_11335 || null,
-    panel: f.customfield_11368 || null,
-    cpBoard: f.customfield_11369 || null,
-    hubMotor: f.customfield_11370 || null,
-    lidar: f.customfield_11371 || null,
-    wiringHarness: f.customfield_11372 || null,
-    autoUnhitch: f.customfield_11373 || null,
-    electronicsBoards: f.customfield_11374 || null,
-    battery: f.customfield_11375 || null,
-    charger: f.customfield_11376 || null,
-    // DEL link (live) — fallback to hardcoded map
+    vehicleSerial: f.customfield_10884 || '', poNumber: f.customfield_10588 || '',
+    materialStatus: f.customfield_11236?.value || '', materialAvailability: f.customfield_11269 || '',
+    qty: f.customfield_10598 || '', spoc: f.customfield_10603 || '', location: f.customfield_10046 || '',
+    purchaseType: f.customfield_11202?.value || '', poReceived: f.customfield_10675?.value || '',
+    leadTimeWeeks: f.customfield_10810 || '', assignee: f.assignee?.displayName || '',
+    chassis: f.customfield_11335 || null, panel: f.customfield_11368 || null,
+    cpBoard: f.customfield_11369 || null, hubMotor: f.customfield_11370 || null,
+    lidar: f.customfield_11371 || null, wiringHarness: f.customfield_11372 || null,
+    autoUnhitch: f.customfield_11373 || null, electronicsBoards: f.customfield_11374 || null,
+    battery: f.customfield_11375 || null, charger: f.customfield_11376 || null,
     delKey: delKey || DEL_MAP[issue.key]?.delKey || null,
     delStatus: delStatus || DEL_MAP[issue.key]?.delStatus || null,
   };
@@ -1038,28 +1112,24 @@ async function requestRefresh() {
   btn.disabled = true;
   try {
     const all = [];
-    let startAt = 0;
-    let page = 1;
+    let startAt = 0, page = 1;
     const JQL = 'project = MOM AND status not in ("Done","Rejected") ORDER BY updated DESC';
     while (true) {
       btn.textContent = `⏳ Page ${page}…`;
       const data = await jiraSearch(JQL, startAt);
       all.push(...(data.issues || []).map(parseIssueFromJira));
       if (data.isLast || !data.nextStartAt) break;
-      startAt = data.nextStartAt;
-      page++;
+      startAt = data.nextStartAt; page++;
     }
     builds = all;
     document.getElementById('meta-info').textContent =
       `${builds.length} active MOs · updated ${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`;
-    populateAmrFilter();
-    populateMatAmrFilter();
-    renderSidebar();
-    renderList();
+    populateAmrFilter(); populateMatAmrFilter();
+    renderSidebar(); renderList();
     if (activeTab === 'kpi') renderKpiTab();
     if (activeTab === 'mat') renderMatPlanning();
     toast(`Refreshed — ${builds.length} MOs loaded`, 'ok');
-  } catch (e) {
+  } catch(e) {
     toast('Refresh failed: ' + e.message, 'err');
     console.error(e);
   } finally {
