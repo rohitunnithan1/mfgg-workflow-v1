@@ -327,9 +327,9 @@ main.no-sidebar sidebar{opacity:0;pointer-events:none;overflow:hidden;width:0;pa
           </div>
         </div>
         <div class="chart-card">
-          <div class="chart-title">Cumulative Dispatch Plan by Month</div>
-          <div class="chart-sub">How many MOs are planned for dispatch each month (cumulative)</div>
-          <div style="height:260px"><canvas id="cumulative-chart"></canvas></div>
+          <div class="chart-title">Cumulative AMR Production</div>
+          <div class="chart-sub">Planned cumulative dispatch vs Actual cumulative production · by calendar week</div>
+          <div style="height:320px"><canvas id="cumulative-chart"></canvas></div>
         </div>
       </div>
     </div>
@@ -1042,26 +1042,75 @@ function renderWeeklyDispatch() {
   });
 }
 
+function getISOWeek(dateStr) {
+  const [y,m,d] = dateStr.substring(0,10).split('-').map(Number);
+  const dt = new Date(y, m-1, d); dt.setHours(0,0,0,0);
+  const day = dt.getDay() || 7;
+  dt.setDate(dt.getDate() + 4 - day);
+  const jan1 = new Date(dt.getFullYear(), 0, 1);
+  return [dt.getFullYear(), Math.ceil(((dt - jan1) / 86400000 + 1) / 7)];
+}
+function isoWeekLabel(dateStr) {
+  const [y, w] = getISOWeek(dateStr);
+  return `W${String(w).padStart(2,'0')} '${String(y).slice(2)}`;
+}
+
 function renderCumulative() {
-  const mp={};
-  builds.forEach(b=>{ if(b.dispatchPlan){const m=b.dispatchPlan.substring(0,7);mp[m]=(mp[m]||0)+1;} });
-  const months=Object.keys(mp).sort();
-  let cum=0; const data=months.map(m=>{cum+=mp[m];return cum;});
-  const labels=months.map(m=>{const[y,mo]=m.split('-');return new Date(+y,+mo-1).toLocaleDateString('en-GB',{month:'short',year:'2-digit'});});
+  const today   = new Date(); today.setHours(0,0,0,0);
+  const todayWk = getMonday(localDateStr(today));
+  const allBuilds = [...builds, ...historicalBuilds];
+
+  const planWk = {};
+  allBuilds.forEach(b => {
+    if (!b.duedate) return;
+    const wk = getMonday(b.duedate.substring(0,10));
+    planWk[wk] = (planWk[wk]||0) + 1;
+  });
+
+  const actualWk = {};
+  allBuilds.filter(b => b.stage==='DONE'||b.stage==='DISPATCH').forEach(b => {
+    const ds = b.actualDispatchDate || (b.dispatchActual ? b.dispatchActual+'-15' : null);
+    if (!ds) return;
+    const wk = getMonday(ds.substring(0,10));
+    if (wk <= todayWk) actualWk[wk] = (actualWk[wk]||0) + 1;
+  });
+
+  const allWks = [...new Set([...Object.keys(planWk), ...Object.keys(actualWk), todayWk])].sort();
+  if (!allWks.length) return;
+
+  const firstWk = allWks[0], lastWk = allWks[allWks.length-1];
+  const weeks = [];
+  let cur = firstWk;
+  while (cur <= lastWk) { weeks.push(cur); cur = addWeeks(cur,1); }
+
+  let cp=0, ca=0;
+  const planData=[], actData=[];
+  weeks.forEach(wk => {
+    cp += planWk[wk]||0; planData.push(cp);
+    if (wk <= todayWk) { ca += actualWk[wk]||0; actData.push(ca); } else actData.push(null);
+  });
+
+  const N = Math.max(1, Math.ceil(weeks.length / 25));
+  const labels = weeks.map((w,i) => i % N === 0 ? isoWeekLabel(w) : '');
+
   Chart.getChart('cumulative-chart')?.destroy();
-  new Chart(document.getElementById('cumulative-chart'),{
-    type:'bar',
-    data:{labels,datasets:[
-      {label:'MOs planned',data:months.map(m=>mp[m]),backgroundColor:'rgba(37,99,235,.7)',borderRadius:4},
-      {type:'line',label:'Cumulative',data,borderColor:'#7c3aed',backgroundColor:'transparent',borderWidth:2,pointRadius:3,tension:0.3,yAxisID:'y2'},
+  new Chart(document.getElementById('cumulative-chart'), {
+    type: 'line',
+    data: { labels, datasets: [
+      { label:'Actual Cumulative Production', data:actData, borderColor:'#10b981', backgroundColor:'rgba(16,185,129,0.08)', borderWidth:2.5, pointRadius:3, pointBackgroundColor:'#10b981', tension:0.3, fill:true, spanGaps:false },
+      { label:'Planned Cumulative Dispatch', data:planData, borderColor:'#f59e0b', backgroundColor:'transparent', borderWidth:2, borderDash:[6,3], pointRadius:3, pointBackgroundColor:'#f59e0b', tension:0.3, fill:false },
     ]},
-    options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{labels:{font:{size:11},color:'#374151'}}},
+    options: {
+      responsive:true, maintainAspectRatio:false, layout:{padding:{top:10}},
+      plugins:{
+        legend:{ position:'top', labels:{font:{size:11},color:'#374151',boxWidth:32,boxHeight:2,padding:16} },
+        tooltip:{ callbacks:{ title: ctx => isoWeekLabel(weeks[ctx[0].dataIndex]) } }
+      },
       scales:{
-        x:{grid:{display:false},ticks:{font:{size:10},color:'#6b7280'}},
-        y:{beginAtZero:true,ticks:{stepSize:1,font:{size:10},color:'#6b7280'},grid:{color:'#f3f4f6'},title:{display:true,text:'MOs / month',font:{size:10},color:'#6b7280'}},
-        y2:{position:'right',beginAtZero:true,grid:{display:false},ticks:{font:{size:10},color:'#7c3aed'},title:{display:true,text:'Cumulative',font:{size:10},color:'#7c3aed'}},
-      }}
+        x:{ grid:{color:'#f3f4f6'}, ticks:{font:{size:10},color:'#6b7280',maxRotation:0} },
+        y:{ beginAtZero:true, title:{display:true,text:'Cumulative AMRs',font:{size:10},color:'#6b7280'}, grid:{color:'#f3f4f6'}, ticks:{font:{size:10},color:'#6b7280'} }
+      }
+    }
   });
 }
 
