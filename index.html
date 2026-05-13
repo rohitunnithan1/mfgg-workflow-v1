@@ -417,6 +417,7 @@ let builds = SEED.map(b => ({
   ...(DEL_MAP[b.key] || {delKey: null, delStatus: null})
 }));
 let activeStage = 'all';
+let activeTab = 'prod';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -465,6 +466,7 @@ function serialNum(s) {
 }
 
 function switchTab(tab) {
+  activeTab = tab;
   document.querySelectorAll('.page-tab').forEach(b=>b.classList.remove('active'));
   document.getElementById('tab-'+tab).classList.add('active');
   document.getElementById('pane-prod').style.display = tab==='prod'?'block':'none';
@@ -956,13 +958,11 @@ const LIVE_FIELDS = [
   'customfield_11375','customfield_11376',
 ];
 
-async function jiraSearch(jql, nextPageToken) {
-  const body = { jql, fields: LIVE_FIELDS, maxResults: 100 };
-  if (nextPageToken) body.nextPageToken = nextPageToken;
+async function jiraSearch(jql, startAt = 0) {
   const resp = await fetch('/api/jira', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ jql, fields: LIVE_FIELDS, maxResults: 100, startAt }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
@@ -1038,17 +1038,15 @@ async function requestRefresh() {
   btn.disabled = true;
   try {
     const all = [];
-    let nextPageToken = null;
+    let startAt = 0;
     let page = 1;
+    const JQL = 'project = MOM AND status not in ("Done","Rejected") ORDER BY updated DESC';
     while (true) {
       btn.textContent = `⏳ Page ${page}…`;
-      const data = await jiraSearch(
-        'project = MOM AND status not in ("Done","Rejected") ORDER BY updated DESC',
-        nextPageToken
-      );
+      const data = await jiraSearch(JQL, startAt);
       all.push(...(data.issues || []).map(parseIssueFromJira));
-      if (data.isLast || !data.nextPageToken) break;
-      nextPageToken = data.nextPageToken;
+      if (data.isLast || !data.nextStartAt) break;
+      startAt = data.nextStartAt;
       page++;
     }
     builds = all;
