@@ -890,9 +890,27 @@ function renderKpiCards() {
     </div>`).join('');
 }
 
-function getMonday(d){
-  const dt=new Date(d), day=dt.getDay(), diff=dt.getDate()-day+(day===0?-6:1);
-  return new Date(dt.setDate(diff)).toISOString().substring(0,10);
+function getMonday(d) {
+  let dt;
+  if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d)) {
+    const [y,m,dy] = d.substring(0,10).split('-').map(Number);
+    dt = new Date(y, m-1, dy);
+  } else {
+    dt = new Date(d);
+  }
+  dt.setHours(0,0,0,0);
+  const day = dt.getDay();
+  dt.setDate(dt.getDate() - day + (day===0?-6:1));
+  return localDateStr(dt);
+}
+function localDateStr(dt) {
+  const y=dt.getFullYear(), m=String(dt.getMonth()+1).padStart(2,'0'), d=String(dt.getDate()).padStart(2,'0');
+  return `${y}-${m}-${d}`;
+}
+function addWeeks(mondayStr, n) {
+  const [y,m,d]=mondayStr.split('-').map(Number);
+  const dt=new Date(y,m-1,d); dt.setDate(dt.getDate()+n*7);
+  return localDateStr(dt);
 }
 
 function renderWeeklyDispatch() {
@@ -937,10 +955,15 @@ function renderWeeklyDispatch() {
 
   if(!wm[todayWk]) wm[todayWk]={overdue:[],thisWeek:[],upcoming:[],done:[]};
 
-  const allWks=Object.keys(wm).sort();
-  const tIdx=allWks.indexOf(todayWk);
-  const start=Math.max(0,tIdx-6);
-  const weeks=allWks.slice(start,start+18);
+  const dataWks = Object.keys(wm).sort();
+  const earliest = dataWks[0] || todayWk;
+  const latest   = dataWks[dataWks.length-1] || todayWk;
+  const rangeStart = addWeeks(todayWk,-8) < earliest ? addWeeks(todayWk,-8) : earliest;
+  const rangeEnd   = addWeeks(todayWk,12) > latest   ? addWeeks(todayWk,12) : latest;
+
+  const weeks = [];
+  let cur = rangeStart;
+  while (cur <= rangeEnd) { weeks.push(cur); cur = addWeeks(cur,1); }
 
   // Multi-line labels: "DD Mon / – DD Mon / PAST|THIS WEEK"
   const labels=weeks.map(w=>{
@@ -990,6 +1013,7 @@ function renderWeeklyDispatch() {
     ]},
     options:{
       responsive:true,maintainAspectRatio:false,
+      layout:{padding:{top:22}},
       plugins:{
         legend:{display:false},
         tooltip:{
