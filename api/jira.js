@@ -5,7 +5,6 @@
  *   JIRA_API_TOKEN  — API token from https://id.atlassian.com/manage-profile/security/api-tokens
  */
 
-// Direct tenant URL — works with Basic auth (email + API token)
 const JIRA_BASE = 'https://ati-motors.atlassian.net/rest/api/3';
 
 module.exports = async function handler(req, res) {
@@ -24,20 +23,25 @@ module.exports = async function handler(req, res) {
     });
   }
 
-  const { jql, fields, maxResults = 100, startAt = 0 } = req.body || {};
+  const { jql, maxResults = 100, startAt = 0 } = req.body || {};
   if (!jql) return res.status(400).json({ error: 'Missing required field: jql' });
 
   const auth = Buffer.from(`${email}:${token}`).toString('base64');
 
+  // GET with fields=*all — avoids field validation errors, works reliably with Basic auth
+  const url = new URL(`${JIRA_BASE}/issue/search`);
+  url.searchParams.set('jql', jql);
+  url.searchParams.set('maxResults', String(maxResults));
+  url.searchParams.set('startAt', String(startAt));
+  url.searchParams.set('fields', '*all');
+
   try {
-    const upstream = await fetch(`${JIRA_BASE}/issue/search`, {
-      method: 'POST',
+    const upstream = await fetch(url.toString(), {
+      method: 'GET',
       headers: {
         Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ jql, fields, maxResults, startAt }),
     });
 
     const data = await upstream.json();
@@ -50,7 +54,7 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    // Compute isLast + nextStartAt for frontend pagination
+    // Compute pagination flags
     const total = data.total || 0;
     const returned = (data.issues || []).length;
     const currentStart = data.startAt || 0;
