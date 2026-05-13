@@ -29,22 +29,15 @@ module.exports = async function handler(req, res) {
 
   const auth = Buffer.from(`${email}:${token}`).toString('base64');
 
-  // Use GET — Jira's search endpoint supports this and avoids POST permission issues
-  const url = new URL(`${JIRA_BASE}/issue/search`);
-  url.searchParams.set('jql', jql);
-  url.searchParams.set('maxResults', String(maxResults));
-  url.searchParams.set('startAt', String(startAt));
-  if (fields && fields.length) {
-    url.searchParams.set('fields', Array.isArray(fields) ? fields.join(',') : fields);
-  }
-
   try {
-    const upstream = await fetch(url.toString(), {
-      method: 'GET',
+    const upstream = await fetch(`${JIRA_BASE}/issue/search`, {
+      method: 'POST',
       headers: {
         Authorization: `Basic ${auth}`,
+        'Content-Type': 'application/json',
         Accept: 'application/json',
       },
+      body: JSON.stringify({ jql, fields, maxResults, startAt }),
     });
 
     const data = await upstream.json();
