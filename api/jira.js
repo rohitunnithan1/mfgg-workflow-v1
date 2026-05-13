@@ -5,11 +5,10 @@
  *   JIRA_API_TOKEN  — API token from https://id.atlassian.com/manage-profile/security/api-tokens
  */
 
-const CLOUD_ID = '0906a834-871d-4220-adc1-d160b95921e1';
-const JIRA_BASE = `https://api.atlassian.com/ex/jira/${CLOUD_ID}/rest/api/3`;
+// Direct tenant URL — works with Basic auth (email + API token)
+const JIRA_BASE = 'https://ati-motors.atlassian.net/rest/api/3';
 
 module.exports = async function handler(req, res) {
-  // CORS — allow the Vercel frontend to call this
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -25,22 +24,27 @@ module.exports = async function handler(req, res) {
     });
   }
 
-  const { jql, fields, maxResults = 100, nextPageToken } = req.body || {};
+  const { jql, fields, maxResults = 100, startAt = 0 } = req.body || {};
   if (!jql) return res.status(400).json({ error: 'Missing required field: jql' });
 
   const auth = Buffer.from(`${email}:${token}`).toString('base64');
-  const body = { jql, fields, maxResults };
-  if (nextPageToken) body.nextPageToken = nextPageToken;
+
+  // Use GET — Jira's search endpoint supports this and avoids POST permission issues
+  const url = new URL(`${JIRA_BASE}/issue/search`);
+  url.searchParams.set('jql', jql);
+  url.searchParams.set('maxResults', String(maxResults));
+  url.searchParams.set('startAt', String(startAt));
+  if (fields && fields.length) {
+    url.searchParams.set('fields', Array.isArray(fields) ? fields.join(',') : fields);
+  }
 
   try {
-    const upstream = await fetch(`${JIRA_BASE}/issue/search`, {
-      method: 'POST',
+    const upstream = await fetch(url.toString(), {
+      method: 'GET',
       headers: {
         Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify(body),
     });
 
     const data = await upstream.json();
@@ -52,6 +56,13 @@ module.exports = async function handler(req, res) {
           : data.message || `Jira returned ${upstream.status}`,
       });
     }
+
+    // Compute isLast + nextStartAt for frontend pagination
+    const total = data.total || 0;
+    const returned = (data.issues || []).length;
+    const currentStart = data.startAt || 0;
+    data.isLast = (currentStart + returned) >= total;
+    data.nextStartAt = data.isLast ? null : currentStart + returned;
 
     return res.status(200).json(data);
   } catch (err) {
